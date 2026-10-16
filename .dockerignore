@@ -1,0 +1,12 @@
+.git
+.gitignore
+.env
+.env.*
+build/
+out/
+cmake-build-*/
+*.md
+docker-compose.yml
+Caddyfile
+.dockerignore
+scripts/

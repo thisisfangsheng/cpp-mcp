@@ -1,0 +1,33 @@
+# Caddyfile —— TLS 终结（N-1：SDK 内不做 TLS，全部由反代负责）
+#
+# D-7 证书策略：
+#   * 无域名（仅公网 IP）：保持 `tls internal`，Caddy 用自建 CA 签一张 mcp.internal 证书，
+#     并用 `default_sni` 兜住「客户端直连 IP、不带 SNI」的场景。
+#     客户端需 `curl -k`，或信任该 CA：
+#       docker compose cp mcp-caddy:/data/caddy/pki/authorities/local/root.crt ./root.crt
+#   * 有域名：把站点地址改为 `your.domain.com`（删除 `:443` 通配项与 `default_sni`），
+#     并删除 `tls internal` 一行，Caddy 自动通过 ACME 申请公信证书（需放行 80/443）。
+#
+# 需要 Caddy 2.7+（default_sni）。
+{
+	# 不向公网暴露 admin API
+	admin off
+	# 客户端以 IP 直连时不发送 SNI，用该名字选择证书
+	default_sni mcp.internal
+	auto_https disable_redirects
+}
+
+mcp.internal:443, :443 {
+	# 自建 CA 自签证书（无域名场景）。换域名时删除此行。
+	tls internal
+
+	# D-4：关闭响应缓冲（flush_interval -1），为 SSE / 流式扩展预留
+	reverse_proxy mcp-server:8080 {
+		flush_interval -1
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}
