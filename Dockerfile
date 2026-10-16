@@ -11,6 +11,7 @@ RUN apk add --no-cache \
       cmake \
       linux-headers \
       boost-dev \
+      curl-dev \
       nlohmann-json \
       git
 

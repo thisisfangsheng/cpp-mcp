@@ -7,13 +7,16 @@ BIN="${1:-build/mcp_server}"
 PORT="${PORT:-18080}"
 TOKEN="${TOKEN:-test-token-123}"
 BASE="http://127.0.0.1:${PORT}"
+export NO_PROXY="${NO_PROXY:+$NO_PROXY,}127.0.0.1,localhost"
+export no_proxy="${no_proxy:+$no_proxy,}127.0.0.1,localhost"
 
 if [ ! -x "$BIN" ]; then
   echo "FATAL: $BIN not found (先执行 cmake --build build)" >&2
   exit 1
 fi
 
-MCP_HOST=127.0.0.1 MCP_PORT="$PORT" MCP_AUTH_TOKEN="$TOKEN" "$BIN" >/tmp/mcp-smoke.out 2>/tmp/mcp-smoke.err &
+env -u ARK_API_KEY MCP_HOST=127.0.0.1 MCP_PORT="$PORT" MCP_AUTH_TOKEN="$TOKEN" \
+  "$BIN" >/tmp/mcp-smoke.out 2>/tmp/mcp-smoke.err &
 PID=$!
 trap 'kill -TERM "$PID" 2>/dev/null; wait "$PID" 2>/dev/null' EXIT
 
@@ -60,8 +63,9 @@ check "A-2 notification body" "0" "$(wc -c </tmp/mcp-body.txt | tr -d ' ')"
 CODE=$(post '{"jsonrpc":"2.0","id":2,"method":"tools/list"}')
 BODY=$(cat /tmp/mcp-body.txt)
 check "A-3 tools/list status" "200" "$CODE"
-check "A-3 tool names" "add echo" "$(echo "$BODY" | jq -r '.result.tools | map(.name) | sort | join(" ")')"
+check "A-3 tool names" "add analyze_image echo" "$(echo "$BODY" | jq -r '.result.tools | map(.name) | sort | join(" ")')"
 check "A-3 add inputSchema" "object" "$(echo "$BODY" | jq -r '.result.tools[] | select(.name=="add") | .inputSchema.type')"
+check "A-3 image tool input" "image_base64" "$(echo "$BODY" | jq -r '.result.tools[] | select(.name=="analyze_image") | .inputSchema.required[0]')"
 
 # A-4 tools/call -------------------------------------------------------------
 CODE=$(post '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"add","arguments":{"a":40,"b":2}}}')
@@ -71,6 +75,9 @@ CODE=$(post '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"ech
 check "A-4 echo result" "hello mcp" "$(cat /tmp/mcp-body.txt | jq -r '.result.content[0].text')"
 CODE=$(post '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"add","arguments":{"a":"x","b":1}}}')
 check "A-4 handler error isError" "true" "$(cat /tmp/mcp-body.txt | jq -r '.result.isError')"
+CODE=$(post '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"analyze_image","arguments":{"image_base64":"YQ=="}}}')
+check "A-4 image missing API key isError" "true" "$(cat /tmp/mcp-body.txt | jq -r '.result.isError')"
+check "A-4 image missing API key message" "true" "$(cat /tmp/mcp-body.txt | jq -r '.result.content[0].text | contains("ARK_API_KEY is not configured")')"
 
 # A-5 error paths ------------------------------------------------------------
 CODE=$(post '{"jsonrpc":"2.0","id":6,"method":"nope"}')

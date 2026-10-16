@@ -1,8 +1,8 @@
 # mcp-cpp-sdk
 
-纯 C++（C++20）实现的 **MCP server SDK** 与示例服务：**100% header-only**，仅复用 Boost 头文件
-（Beast/Asio）与 nlohmann/json，除 Boost 外零第三方编译依赖；支持 **Streamable HTTP remote
-transport**，以 Docker 容器形态交付，经前置反向代理（Caddy）通过宿主机公网 IP 提供 HTTPS 访问。
+纯 C++（C++20）实现的 **MCP server SDK** 与示例服务：SDK 核心保持 **header-only**，依赖 Boost
+（Beast/Asio）与 nlohmann/json；示例服务额外使用 libcurl 调用火山方舟图像理解 API。支持
+**Streamable HTTP remote transport**，以 Docker 容器形态交付，经前置反向代理（Caddy）通过宿主机公网 IP 提供 HTTPS 访问。
 
 协议基线：MCP **2026-07-28** 最小合规子集（无状态线协议：无 `Mcp-Session-Id`、无 `Last-Event-ID`
 恢复），向下兼容协商 2025-11-25。
@@ -18,7 +18,7 @@ transport**，以 Docker 容器形态交付，经前置反向代理（Caddy）�
 | `include/mcp/server.hpp` | 协议核心：工具注册表 + 请求分发（与传输层解耦） |
 | `include/mcp/http.hpp` | Streamable HTTP 传输层（Beast + Asio 协程） |
 | `include/mcp/mcp.hpp` | 聚合头，使用者只需 `#include <mcp/mcp.hpp>` |
-| `src/main.cpp` | 示例 server：`echo` / `add` 工具 + Bearer 鉴权 |
+| `src/main.cpp` | 示例 server：`echo` / `add` / `analyze_image` 工具 + Bearer 鉴权 |
 | `CMakeLists.txt` | 构建脚本（`find_package` 优先、FetchContent 兜底） |
 | `Dockerfile` | 多阶段构建：alpine 编译 musl 全静态二进制 → 极简运行镜像 |
 | `docker-compose.yml` | 编排：`mcp-server`（不映射公网）+ `caddy`（唯一 443 入口） |
@@ -30,7 +30,8 @@ transport**，以 Docker 容器形态交付，经前置反向代理（Caddy）�
 ## 2. 本地构建与运行
 
 依赖：C++20 编译器（gcc 11+ / clang 14+）、CMake 3.20+、Boost 1.74+ 头文件、`nlohmann_json` 3.10+
-（系统无该包时 CMake 自动 FetchContent 拉取，需要网络）。
+（系统无该包时 CMake 自动 FetchContent 拉取，需要网络）。构建示例服务还需要 libcurl 开发包：
+Ubuntu 可执行 `sudo apt install libcurl4-openssl-dev`。
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -43,11 +44,11 @@ cmake --build build -j
 MCP_HOST=127.0.0.1 MCP_PORT=8080 MCP_AUTH_TOKEN=test-token-123 ./build/mcp_server
 ```
 
-冒烟测试（A-1 ~ A-8 + CORS/keep-alive 断言，共 37 条）：
+冒烟测试（A-1 ~ A-8 + 图像工具配置/CORS/keep-alive 断言，共 40 条）：
 
 ```bash
 ./scripts/smoke_test.sh build/mcp_server
-# passed: 37   failed: 0
+# passed: 40   failed: 0
 ```
 
 手工验证：
@@ -60,6 +61,50 @@ curl -s -X POST http://127.0.0.1:8080/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"add","arguments":{"a":40,"b":2}}}'
 # {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"42","type":"text"}],"isError":false}}
 ```
+
+### 图像理解 demo
+
+服务注册了 `analyze_image` 工具。传入单行 base64 字符串 `image_base64`，可选传入 `mime_type`
+（`image/jpeg`、`image/png`、`image/webp`）和 `prompt`；工具会构造 Ark Chat Completions 的 data URL，
+使用 `ARK_API_KEY` 调用 `doubao-seed-2-1-pro-260628` 并返回模型文本。单张图片 base64 上限为 12 MiB，
+demo 的 MCP 请求体默认上限为 16 MiB。
+
+配置并启动服务：
+
+```bash
+cp .env.example .env
+# 在 .env 中填写 ARK_API_KEY；本地代理按需设置 ARK_PROXY
+set -a && . ./.env && set +a
+MCP_HOST=127.0.0.1 MCP_PORT=8080 ./build/mcp_server
+```
+
+调用示例：
+
+```bash
+IMAGE_BASE64=$(base64 -w 0 aaa.jpg)
+cat > request.json <<EOF
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "analyze_image",
+    "arguments": {
+      "prompt": "请详细描述这张图片",
+      "mime_type": "image/jpeg",
+      "image_base64": "$IMAGE_BASE64"
+    }
+  }
+}
+EOF
+curl --noproxy '*' -sS http://127.0.0.1:8080/mcp \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer ${MCP_AUTH_TOKEN}" \
+  --data-binary @request.json
+```
+
+设置 `ARK_PROXY=http://127.0.0.1:8888` 使用显式代理；未设置时 libcurl 会读取 `HTTPS_PROXY`/
+`https_proxy` 等标准环境变量。设置 `ARK_PROXY=direct` 可绕过环境代理。生产环境无需代理时可留空。
 
 ## 3. SDK 用法（最少代码）
 
@@ -129,7 +174,10 @@ int main() {
 | `MCP_THREADS` | `1` | `io_context` 线程数 |
 | `MCP_SERVER_NAME` / `MCP_SERVER_VERSION` | `mcp-cpp-example` / `1.0.0` | `serverInfo` |
 | `MCP_AUTH_TOKEN` | 空 | Bearer token；**为空则关闭鉴权**（仅限可信内网） |
-| `MCP_BODY_LIMIT` | `4194304` | 请求体上限（字节） |
+| `MCP_BODY_LIMIT` | `16777216` | 请求体上限（字节）；demo 默认 16 MiB 以容纳 base64 图片 |
+| `ARK_API_KEY` | 空 | Ark API key；调用 `analyze_image` 时必需 |
+| `ARK_MODEL` | `doubao-seed-2-1-pro-260628` | Ark 视觉模型 ID |
+| `ARK_PROXY` | 空 | 可选代理 URL；`direct` 表示不使用代理；未设置时遵循 libcurl 代理环境变量 |
 
 ## 6. Docker 部署（公网 IP + HTTPS）
 
