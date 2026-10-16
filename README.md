@@ -29,7 +29,7 @@ transport**，以 Docker 容器形态交付，经前置反向代理（Caddy）�
 
 ## 2. 本地构建与运行
 
-依赖：C++20 编译器（gcc 11+ / clang 14+）、CMake 3.20+、Boost 1.75+ 头文件、`nlohmann_json` 3.11+
+依赖：C++20 编译器（gcc 11+ / clang 14+）、CMake 3.20+、Boost 1.74+ 头文件、`nlohmann_json` 3.10+
 （系统无该包时 CMake 自动 FetchContent 拉取，需要网络）。
 
 ```bash

@@ -20,9 +20,9 @@ option(MCP_STATIC_LINK   "Statically link the example binary (musl/static)" OFF)
 find_package(Threads REQUIRED)
 
 set(Boost_NO_BOOST_CMAKE OFF)
-find_package(Boost 1.75 REQUIRED)  # 无 components：仅头文件
+find_package(Boost 1.74 REQUIRED)  # 无 components：仅头文件
 
-find_package(nlohmann_json 3.11 QUIET)
+find_package(nlohmann_json 3.10 QUIET)
 if(NOT nlohmann_json_FOUND)
   message(STATUS "nlohmann_json not found locally, fetching via FetchContent ...")
   include(FetchContent)
